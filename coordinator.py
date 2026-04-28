@@ -27,6 +27,7 @@ class CoordinatorApp:
         self.running_tasks = []
         self.completed_tasks = []
         self.sessions = []
+        self.chat_history = []
 
         self.completed = 0
         self.total_wait = 0
@@ -61,14 +62,17 @@ class CoordinatorApp:
         self.tabs.add("Control")
         self.tabs.add("Devices")
         self.tabs.add("Analytics")
+        self.tabs.add("Chat")
 
         self.tab1 = self.tabs.tab("Control")
         self.tab2 = self.tabs.tab("Devices")
         self.tab3 = self.tabs.tab("Analytics")
+        self.tab4 = self.tabs.tab("Chat")
 
         self.build_tab1()
         self.build_tab2()
         self.build_tab3()
+        self.build_tab4()
 
     def build_tab1(self):
         alg = ctk.CTkFrame(self.tab1)
@@ -229,6 +233,37 @@ class CoordinatorApp:
 
         self.log = ctk.CTkTextbox(right, height=220)
         self.log.pack(fill="both", expand=True, padx=5, pady=5)
+    
+    def build_tab4(self):
+        frame = ctk.CTkFrame(self.tab4)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        ctk.CTkLabel(
+            frame,
+            text="Group Chat",
+            font=ctk.CTkFont(size=18, weight="bold")
+        ).pack(pady=(10, 8))
+
+        self.chat_box = ctk.CTkTextbox(frame)
+        self.chat_box.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.chat_box.configure(state="disabled")
+
+        bottom = ctk.CTkFrame(frame)
+        bottom.pack(fill="x", padx=10, pady=(0, 10))
+
+        self.chat_entry = ctk.CTkEntry(
+            bottom,
+            placeholder_text="Type message to all workers..."
+        )
+        self.chat_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        self.send_btn = ctk.CTkButton(
+            bottom,
+            text="Send",
+            width=120,
+            command=self.send_chat_from_coordinator
+        )
+        self.send_btn.pack(side="right")
 
     def make_box(self, parent, title, r, c):
         box = ctk.CTkFrame(parent)
@@ -324,9 +359,22 @@ class CoordinatorApp:
                     elif msg_type == "task_done":
                         self.finish_task(msg)
 
+                    elif msg_type == "chat":
+                        self.receive_chat(msg)
+
             except Exception as e:
                 print("CLIENT ERROR:", addr, e)
                 break
+
+        with self.lock:
+            self.clients = [c for c in self.clients if c["socket"] != sock]
+
+        self.ui(self.update_table)
+        self.ui(
+            lambda: self.status_label.configure(
+                text=f"{len(self.clients)} Clients Connected"
+            )
+        )
 
         try:
             sock.close()
@@ -334,6 +382,60 @@ class CoordinatorApp:
             pass
     # ------------------------------------------------ Data actions
 
+
+    def send_chat_from_coordinator(self):
+        text = self.chat_entry.get().strip()
+
+        if text == "":
+            return
+
+        self.receive_chat({
+            "sender": "Coordinator",
+            "message": text
+        })
+
+        self.chat_entry.delete(0, "end")
+
+    def receive_chat(self, msg):
+        sender = msg.get("sender", "Unknown")
+        message = msg.get("message", "")
+
+        def task():
+            self.chat_box.configure(state="normal")
+            self.chat_box.insert("end", f"[{sender}] {message}\n")
+            self.chat_box.see("end")
+            self.chat_box.configure(state="disabled")
+
+        self.ui(task)
+
+        packet = json.dumps({
+            "type": "chat",
+            "sender": sender,
+            "message": message
+        }).encode()
+
+        with self.lock:
+            for c in self.clients:
+                try:
+                    c["socket"].send(packet)
+                except:
+                    pass
+
+    def broadcast_chat(self, msg):
+        dead = []
+
+        for c in self.clients:
+            try:
+                c["socket"].send(json.dumps(msg).encode())
+            except:
+                dead.append(c)
+
+        if dead:
+            with self.lock:
+                for d in dead:
+                    if d in self.clients:
+                        self.clients.remove(d)
+                        
     def add_client(self, sock, ip, msg):
         with self.lock:
             self.clients.append({
