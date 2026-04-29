@@ -4,6 +4,7 @@ from tkinter import ttk
 import socket
 import threading
 import json
+import subprocess
 import time
 import random
 from collections import deque
@@ -39,10 +40,23 @@ class CoordinatorApp:
 
         self.lock = threading.Lock()
 
+        self.deadlock_auto = True
+        self.deadlock_mode = False
+
+        self.proc_counter = 0
+        self.blocked_tasks = []
+        self.process_state = {}
+        self.deadlock_history = []
+
+        self.resource_total = [12, 10, 8]
+        self.resource_available = [12, 10, 8]
+        self.recovery_in_progress = False
+
         self.build_ui()
         self.start_server()
 
         threading.Thread(target=self.scheduler_loop, daemon=True).start()
+        threading.Thread(target=self.deadlock_monitor_loop, daemon=True).start()
 
     # ------------------------------------------------ UI
 
@@ -63,16 +77,20 @@ class CoordinatorApp:
         self.tabs.add("Devices")
         self.tabs.add("Analytics")
         self.tabs.add("Chat")
+        self.tabs.add("Deadlock")
 
         self.tab1 = self.tabs.tab("Control")
         self.tab2 = self.tabs.tab("Devices")
         self.tab3 = self.tabs.tab("Analytics")
         self.tab4 = self.tabs.tab("Chat")
+        self.tab5 = self.tabs.tab("Deadlock")
 
         self.build_tab1()
         self.build_tab2()
         self.build_tab3()
         self.build_tab4()
+        self.build_tab5()
+
 
     def build_tab1(self):
         alg = ctk.CTkFrame(self.tab1)
@@ -265,6 +283,245 @@ class CoordinatorApp:
         )
         self.send_btn.pack(side="right")
 
+    def build_tab5(self):
+        frame = ctk.CTkFrame(self.tab5)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+        top = ctk.CTkFrame(frame)
+        top.pack(fill="x", padx=5, pady=5)
+
+        self.deadlock_state = ctk.CTkLabel(
+            top,
+            text="SAFE",
+            fg_color="green",
+            corner_radius=8,
+            width=140
+        )
+        self.deadlock_state.pack(side="right", padx=5)
+
+        self.auto_btn = ctk.CTkButton(
+            top,
+            text="Auto Recover: ON",
+            width=170,
+            command=self.toggle_auto_recover
+        )
+        self.auto_btn.pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            top,
+            text="Generate Deadlock",
+            width=170,
+            command=self.generate_deadlock_case
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            top,
+            text="Reset Monitor",
+            width=150,
+            command=self.reset_deadlock_monitor
+        ).pack(side="left", padx=5)
+
+        info = ctk.CTkFrame(frame)
+        info.pack(fill="x", padx=5, pady=5)
+
+        self.res_label = ctk.CTkLabel(
+            info,
+            text="Available: R0=12  R1=10  R2=8"
+        )
+        self.res_label.pack(side="left", padx=10)
+
+        self.block_label = ctk.CTkLabel(
+            info,
+            text="Blocked: 0"
+        )
+        self.block_label.pack(side="left", padx=20)
+
+        body = ctk.CTkFrame(frame)
+        body.pack(fill="both", expand=True, padx=5, pady=5)
+
+        left = ctk.CTkFrame(body)
+        left.pack(side="left", fill="both", expand=True, padx=4)
+
+        center = ctk.CTkFrame(body)
+        center.pack(side="left", fill="both", expand=True, padx=4)
+
+        right = ctk.CTkFrame(body)
+        right.pack(side="left", fill="both", expand=True, padx=4)
+
+        ctk.CTkLabel(
+            left,
+            text="Banker Prediction",
+            font=ctk.CTkFont(weight="bold")
+        ).pack(pady=5)
+
+        cols = ("PID", "State", "Alloc", "Need", "Decision")
+        self.banker_tree = ttk.Treeview(
+            left,
+            columns=cols,
+            show="headings",
+            height=18
+        )
+
+        for c in cols:
+            self.banker_tree.heading(c, text=c)
+            self.banker_tree.column(c, width=95, anchor="center")
+
+        self.banker_tree.pack(fill="both", expand=True, padx=5, pady=5)
+
+        ctk.CTkLabel(
+            center,
+            text="Detection",
+            font=ctk.CTkFont(weight="bold")
+        ).pack(pady=5)
+
+        self.detect_box = ctk.CTkTextbox(center)
+        self.detect_box.pack(fill="both", expand=True, padx=5, pady=5)
+
+        ctk.CTkLabel(
+            right,
+            text="Recovery",
+            font=ctk.CTkFont(weight="bold")
+        ).pack(pady=5)
+
+        self.recovery_box = ctk.CTkTextbox(right)
+        self.recovery_box.pack(fill="both", expand=True, padx=5, pady=5)
+
+    def toggle_auto_recover(self):
+        self.deadlock_auto = not self.deadlock_auto
+
+        if self.deadlock_auto:
+            self.auto_btn.configure(text="Auto Recover: ON")
+        else:
+            self.auto_btn.configure(text="Auto Recover: OFF")
+
+
+    def reset_deadlock_monitor(self):
+        self.deadlock_mode = False
+        self.blocked_tasks.clear()
+        self.deadlock_history.clear()
+        self.resource_available = self.resource_total[:]
+
+        for pid in self.process_state:
+            if self.process_state[pid]["state"] == "Blocked":
+                self.process_state[pid]["state"] = "Queued"
+
+        self.refresh_deadlock_panels()
+        self.write_detect_log("Monitor reset")
+
+
+    def generate_deadlock_case(self):
+        with self.lock:
+            if self.deadlock_mode or self.recovery_in_progress:
+                return
+            self.create_deadlock_tasks()
+            self.deadlock_mode = True
+
+        self.write_detect_log("Deadlock test jobs inserted into ready queue")
+        self.write_detect_log("Waiting for contention to build")
+        self.refresh_deadlock_panels()
+
+
+    def write_recovery_log(self, text):
+        def task():
+            now = time.strftime("%H:%M:%S")
+            self.recovery_box.insert("end", f"[{now}] {text}\n")
+            self.recovery_box.see("end")
+        self.ui(task)
+
+
+    def create_deadlock_tasks(self):
+        for i in range(3):
+            self.proc_counter += 1
+            pid = f"P{self.proc_counter}"
+            max_need = [
+                random.randint(3, 5),
+                random.randint(2, 4),
+                random.randint(1, 3)
+            ]
+
+            task = {
+                "pid": pid,
+                "name": f"DeadlockJob{i+1}",
+                "parent": "Deadlock Generator",
+                "duration": random.randint(4, 8),
+                "priority": 1,
+                "arrival": time.time(),
+                "max": max_need[:],
+                "alloc": [0, 0, 0],
+                "need": max_need[:],
+                "state": "Queued"
+            }
+
+            self.pending_tasks.append(task)
+
+            self.process_state[pid] = {
+                "state": "Queued",
+                "max": max_need[:],
+                "alloc": [0, 0, 0],
+                "need": max_need[:],
+                "decision": "Injected"
+            }
+
+
+    def write_detect_log(self, text):
+        def task():
+            now = time.strftime("%H:%M:%S")
+            self.detect_box.insert("end", f"[{now}] {text}\n")
+            self.detect_box.see("end")
+        self.ui(task)
+
+
+    def refresh_deadlock_ui(self):
+        self.res_label.configure(
+            text=f"Available: R0={self.resource_available[0]}  R1={self.resource_available[1]}  R2={self.resource_available[2]}"
+        )
+
+        blocked = sum(
+            1 for p in self.process_state.values()
+            if p["state"] == "Blocked"
+        )
+
+        self.block_label.configure(text=f"Blocked: {blocked}")
+
+        if self.recovery_in_progress:
+            self.deadlock_state.configure(
+                text="RECOVERING",
+                fg_color="orange"
+            )
+        elif self.deadlock_mode:
+            self.deadlock_state.configure(
+                text="DEADLOCK",
+                fg_color="red"
+            )
+        else:
+            self.deadlock_state.configure(
+                text="SAFE",
+                fg_color="green"
+            )
+
+        rows = self.banker_tree.get_children()
+        if rows:
+            self.banker_tree.delete(*rows)
+
+        def sort_key(x):
+            try:
+                return int(x[1:])
+            except:
+                return 9999
+
+        for pid in sorted(self.process_state.keys(), key=sort_key):
+            p = self.process_state[pid]
+
+            self.banker_tree.insert(
+                "",
+                "end",
+                values=(
+                    pid,
+                    p["state"],
+                    str(p["alloc"]),
+                    str(p["need"]),
+                    p.get("decision", "-")
+                )
+            )
     def make_box(self, parent, title, r, c):
         box = ctk.CTkFrame(parent)
         box.grid(row=r, column=c, sticky="nsew", padx=6, pady=6)
@@ -280,6 +537,7 @@ class CoordinatorApp:
         return lb
 
     # ------------------------------------------------ Utility
+
 
     def ui(self, fn):
         self.root.after(0, fn)
@@ -472,18 +730,43 @@ class CoordinatorApp:
         self.ui(self.refresh_sessions)
 
     def add_task(self, msg):
+        self.proc_counter += 1
+        pid = f"P{self.proc_counter}"
+
+        max_need = [
+            random.randint(1, 4),
+            random.randint(1, 3),
+            random.randint(1, 3)
+        ]
+
+        alloc = [0, 0, 0]
+
         task = {
+            "pid": pid,
             "name": msg["task"],
             "parent": msg["parent"],
             "duration": msg["duration"],
             "priority": random.randint(1, 5),
-            "arrival": time.time()
+            "arrival": time.time(),
+            "max": max_need,
+            "alloc": alloc,
+            "need": max_need[:],
+            "state": "Queued"
         }
 
         with self.lock:
             self.pending_tasks.append(task)
 
+            self.process_state[pid] = {
+                "state": "Queued",
+                "max": max_need[:],
+                "alloc": alloc[:],
+                "need": max_need[:],
+                "decision": "Waiting"
+            }
+
         self.ui(self.refresh_queue)
+        self.ui(self.refresh_deadlock_ui)
 
         def add_row():
             self.process_tree.insert(
@@ -491,13 +774,15 @@ class CoordinatorApp:
                 "end",
                 values=(
                     task["parent"],
-                    task["name"],
+                    f'{pid} {task["name"]}',
                     task["priority"],
                     "-",
                     "Queued"
                 )
             )
+
         self.ui(add_row)
+        self.ui(self.refresh_deadlock_panels)
 
     # ------------------------------------------------ Refresh lists
 
@@ -526,6 +811,89 @@ class CoordinatorApp:
             self.completed_list.insert("end", x)
 
     # ------------------------------------------------ Scheduler
+
+    def deadlock_monitor_loop(self):
+        while True:
+            try:
+                with self.lock:
+                    blocked = [
+                        pid for pid, d in self.process_state.items()
+                        if d["state"] == "Blocked"
+                    ]
+                    active = [
+                        pid for pid, d in self.process_state.items()
+                        if d["state"] in ("Running", "Queued", "Blocked")
+                    ]
+
+                if len(blocked) >= 2:
+                    self.write_detect_log(
+                        "Deadlock detected among: " + ", ".join(blocked)
+                    )
+
+                    if self.deadlock_auto and not self.recovery_in_progress:
+                        threading.Thread(
+                            target=self.recover_deadlock_live,
+                            daemon=True
+                        ).start()
+
+                elif self.deadlock_mode and len(active) == 0:
+                    self.deadlock_mode = False
+
+                self.refresh_deadlock_panels()
+
+            except Exception as e:
+                print("monitor error:", e)
+
+            time.sleep(2)
+
+    def recover_deadlock_live(self):
+        self.recovery_in_progress = True
+        with self.lock:
+            blocked = [
+                pid for pid, d in self.process_state.items()
+                if d["state"] == "Blocked"
+            ]
+
+            if not blocked:
+                self.recovery_in_progress = False
+                return
+
+            victim = random.choice(blocked)
+
+        self.write_recovery_log("Recovery started")
+        time.sleep(1)
+
+        self.write_recovery_log(f"Victim selected: {victim}")
+
+        with self.lock:
+            self.process_state[victim]["state"] = "Aborted"
+            self.process_state[victim]["decision"] = "Aborted"
+
+        self.refresh_deadlock_panels()
+        time.sleep(1)
+
+        self.write_recovery_log("Releasing resources")
+
+        with self.lock:
+            self.resource_available = self.resource_total[:]
+
+            for pid, d in self.process_state.items():
+                if d["state"] == "Blocked":
+                    d["state"] = "Queued"
+                    d["decision"] = "Recovered"
+
+            self.blocked_tasks = [
+                t for t in self.blocked_tasks
+                if t["pid"] != victim
+            ]
+
+            self.deadlock_mode = False
+
+        self.refresh_deadlock_panels()
+        self.write_recovery_log("Remaining processes resumed")
+
+        time.sleep(1)
+        self.recovery_in_progress = False
 
     def scheduler_loop(self):
         while True:
@@ -577,12 +945,59 @@ class CoordinatorApp:
 
     def dispatch_tasks(self):
         while True:
+            if self.recovery_in_progress:
+                return
+
             with self.lock:
                 worker = self.choose_worker()
+
                 if not worker or not self.pending_tasks:
                     return
 
                 task = self.choose_task()
+                pid = task["pid"]
+
+                if pid in self.process_state:
+                    if self.process_state[pid]["state"] == "Aborted":
+                        continue
+
+                if self.deadlock_mode and "DeadlockJob" in task["name"]:
+                    task["state"] = "Blocked"
+                    self.process_state[pid]["state"] = "Blocked"
+                    self.process_state[pid]["decision"] = "Waiting Resource"
+                    self.blocked_tasks.append(task)
+
+                    self.write_detect_log(f"{pid} waiting for resource")
+                    self.ui(self.refresh_deadlock_ui)
+                    continue
+
+                need = task["need"][:]
+
+                safe = True
+                for i in range(3):
+                    if need[i] > self.resource_available[i]:
+                        safe = False
+                        break
+
+                if not safe:
+                    task["state"] = "Blocked"
+                    self.process_state[pid]["state"] = "Blocked"
+                    self.process_state[pid]["decision"] = "Unsafe State"
+                    self.blocked_tasks.append(task)
+
+                    self.write_detect_log(f"{pid} unsafe request blocked")
+                    self.ui(self.refresh_deadlock_ui)
+                    continue
+
+                for i in range(3):
+                    self.resource_available[i] -= need[i]
+                    task["alloc"][i] += need[i]
+                    task["need"][i] = 0
+
+                self.process_state[pid]["alloc"] = task["alloc"][:]
+                self.process_state[pid]["need"] = task["need"][:]
+                self.process_state[pid]["state"] = "Running"
+                self.process_state[pid]["decision"] = "Granted"
 
                 worker["busy"] = True
                 worker["load"] += 1
@@ -596,13 +1011,14 @@ class CoordinatorApp:
                     "task": task["name"],
                     "duration": task["duration"]
                 }).encode())
+
             except:
                 with self.lock:
                     worker["busy"] = False
                 return
 
             self.running_tasks.append(
-                f'{task["name"]} -> {worker["device"]}'
+                f'{pid} {task["name"]} -> {worker["device"]}'
             )
 
             self.mark_running(task, worker["device"])
@@ -610,6 +1026,7 @@ class CoordinatorApp:
             self.ui(self.refresh_queue)
             self.ui(self.refresh_running)
             self.ui(self.update_table)
+            self.ui(self.refresh_deadlock_panels)
 
     # ------------------------------------------------ Completion
 
@@ -629,7 +1046,10 @@ class CoordinatorApp:
         dev = msg["device"]
         task_name = msg["task"]
 
-        now = time.time()
+        wait = round(random.uniform(0.5, 3.0), 2)
+        tat = round(wait + random.uniform(2.0, 6.0), 2)
+
+        released_pid = None
 
         with self.lock:
             for c in self.clients:
@@ -639,15 +1059,33 @@ class CoordinatorApp:
                     c["used_ram"] = 0
                     c["used_disk"] = 0
 
-            self.running_tasks = [
-                x for x in self.running_tasks
-                if not (task_name in x and dev in x)
-            ]
+            # Find running task by name/device
+            remove_row = None
+            for item in self.running_tasks:
+                if task_name in item and dev in item:
+                    remove_row = item
+                    break
+
+            if remove_row:
+                self.running_tasks.remove(remove_row)
+
+                parts = remove_row.split()
+                if parts:
+                    released_pid = parts[0]
 
             self.completed += 1
 
-        wait = round(random.uniform(0.5, 3.0), 2)
-        tat = round(wait + random.uniform(2.0, 6.0), 2)
+            # Release resources
+            if released_pid and released_pid in self.process_state:
+                alloc = self.process_state[released_pid]["alloc"]
+
+                for i in range(3):
+                    self.resource_available[i] += alloc[i]
+
+                self.process_state[released_pid]["alloc"] = [0, 0, 0]
+                self.process_state[released_pid]["need"] = [0, 0, 0]
+                self.process_state[released_pid]["state"] = "Completed"
+                self.process_state[released_pid]["decision"] = "Finished"
 
         self.total_wait += wait
         self.total_tat += tat
@@ -658,7 +1096,8 @@ class CoordinatorApp:
         def update_rows():
             for row in self.process_tree.get_children():
                 vals = self.process_tree.item(row, "values")
-                if vals[1] == task_name and vals[3] == dev and vals[4] == "Running":
+
+                if vals[3] == dev and vals[4] == "Running":
                     self.process_tree.item(
                         row,
                         values=(vals[0], vals[1], vals[2], vals[3], "Completed")
@@ -677,8 +1116,41 @@ class CoordinatorApp:
         self.ui(self.update_table)
         self.ui(self.update_stats)
         self.ui(self.update_gantt)
+        self.ui(self.refresh_deadlock_panels)
 
         self.write_log(f"{task_name} completed by {dev}")
+
+        # Try blocked tasks again after release
+        self.retry_blocked_tasks()
+    
+    def retry_blocked_tasks(self):
+        with self.lock:
+            if not self.blocked_tasks:
+                return
+
+            moved = []
+
+            for task in self.blocked_tasks:
+                pid = task["pid"]
+
+                can_run = True
+                for i in range(3):
+                    if task["need"][i] > self.resource_available[i]:
+                        can_run = False
+                        break
+
+                if can_run:
+                    task["state"] = "Queued"
+                    self.process_state[pid]["state"] = "Queued"
+                    self.process_state[pid]["decision"] = "Requeued"
+                    self.pending_tasks.append(task)
+                    moved.append(task)
+
+            for task in moved:
+                self.blocked_tasks.remove(task)
+
+            self.ui(self.refresh_queue)
+            self.ui(self.refresh_deadlock_panels)
 
     # ------------------------------------------------ Tables
 
@@ -787,6 +1259,13 @@ class CoordinatorApp:
         self.ax.set_yticks([])
         self.ax.grid(axis="x", alpha=0.3)
         self.canvas.draw()
+    
+    def refresh_deadlock_panels(self):
+        def task():
+            self.refresh_deadlock_ui()
+        self.ui(task)
+    
+    
 
 
 root = ctk.CTk()

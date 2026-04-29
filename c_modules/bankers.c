@@ -6,23 +6,25 @@
 int main()
 {
     int p, r;
+    int max[MAXP][MAXR];
     int alloc[MAXP][MAXR];
-    int req[MAXP][MAXR];
+    int need[MAXP][MAXR];
     int avail[MAXR];
     int work[MAXR];
-    int finish[MAXP];
-    int dead[MAXP];
-    int deadCount = 0;
+
+    int finish[MAXP] = {0};
+    int safe[MAXP];
+    int count = 0;
 
     scanf("%d %d", &p, &r);
 
     for(int i = 0; i < p; i++)
         for(int j = 0; j < r; j++)
-            scanf("%d", &alloc[i][j]);
+            scanf("%d", &max[i][j]);
 
     for(int i = 0; i < p; i++)
         for(int j = 0; j < r; j++)
-            scanf("%d", &req[i][j]);
+            scanf("%d", &alloc[i][j]);
 
     for(int j = 0; j < r; j++)
         scanf("%d", &avail[j]);
@@ -31,27 +33,41 @@ int main()
         work[j] = avail[j];
 
     for(int i = 0; i < p; i++)
-    {
-        int empty = 1;
-
         for(int j = 0; j < r; j++)
-        {
-            if(alloc[i][j] != 0)
-            {
-                empty = 0;
-                break;
-            }
-        }
+            need[i][j] = max[i][j] - alloc[i][j];
 
-        if(empty)
-            finish[i] = 1;
-        else
-            finish[i] = 0;
+    printf("BANKERS ALGORITHM\n\n");
+
+    printf("MAX MATRIX\n");
+    for(int i = 0; i < p; i++)
+    {
+        for(int j = 0; j < r; j++)
+            printf("%d ", max[i][j]);
+        printf("\n");
     }
 
-    printf("DEADLOCK DETECTION\n\n");
+    printf("\nALLOCATION MATRIX\n");
+    for(int i = 0; i < p; i++)
+    {
+        for(int j = 0; j < r; j++)
+            printf("%d ", alloc[i][j]);
+        printf("\n");
+    }
 
-    while(1)
+    printf("\nNEED MATRIX\n");
+    for(int i = 0; i < p; i++)
+    {
+        for(int j = 0; j < r; j++)
+            printf("%d ", need[i][j]);
+        printf("\n");
+    }
+
+    printf("\nAVAILABLE\n");
+    for(int j = 0; j < r; j++)
+        printf("%d ", avail[j]);
+    printf("\n\n");
+
+    while(count < p)
     {
         int found = 0;
 
@@ -63,7 +79,7 @@ int main()
 
                 for(int j = 0; j < r; j++)
                 {
-                    if(req[i][j] > work[j])
+                    if(need[i][j] > work[j])
                     {
                         possible = 0;
                         break;
@@ -72,7 +88,7 @@ int main()
 
                 if(possible)
                 {
-                    printf("P%d can finish. Work: ", i);
+                    printf("P%d can execute. Work: ", i);
 
                     for(int j = 0; j < r; j++)
                     {
@@ -82,6 +98,7 @@ int main()
 
                     printf("\n");
 
+                    safe[count++] = i;
                     finish[i] = 1;
                     found = 1;
                 }
@@ -89,29 +106,19 @@ int main()
         }
 
         if(found == 0)
-            break;
+        {
+            printf("\nSYSTEM IS UNSAFE\n");
+            return 0;
+        }
     }
+
+    printf("\nSYSTEM IS SAFE\n");
+    printf("SAFE SEQUENCE: ");
 
     for(int i = 0; i < p; i++)
-    {
-        if(finish[i] == 0)
-            dead[deadCount++] = i;
-    }
+        printf("P%d ", safe[i]);
 
-    if(deadCount == 0)
-    {
-        printf("\nNO DEADLOCK\n");
-    }
-    else
-    {
-        printf("\nDEADLOCK DETECTED\n");
-        printf("PROCESSES: ");
-
-        for(int i = 0; i < deadCount; i++)
-            printf("P%d ", dead[i]);
-
-        printf("\n");
-    }
+    printf("\n");
 
     return 0;
 }
