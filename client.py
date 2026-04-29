@@ -16,7 +16,7 @@ class ClientApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Distributed Client Node")
-        self.root.geometry("900x920")
+        self.root.geometry("1100x920")
 
         self.sock = None
         self.connected = False
@@ -46,7 +46,9 @@ class ClientApp:
         self.tabs.add("Dashboard")
         self.tabs.add("Chat")
 
-        self.tab1 = self.tabs.tab("Dashboard")
+        self.dashboard_scroll = ctk.CTkScrollableFrame(self.tabs.tab("Dashboard"))
+        self.dashboard_scroll.pack(fill="both", expand=True, padx=5, pady=5)
+        self.tab1 = self.dashboard_scroll
         self.tab2 = self.tabs.tab("Chat")
 
         self.build_dashboard()
@@ -83,6 +85,7 @@ class ClientApp:
             placeholder_text="Type message..."
         )
         self.chat_entry.pack(side="left", fill="x", expand=True, padx=(0,10))
+        self.chat_entry.bind("<Return>", lambda e: self.send_chat())
 
         self.chat_btn = ctk.CTkButton(
             bottom,
@@ -238,15 +241,12 @@ class ClientApp:
         if not self.connected:
             self.log("Connect first")
             return
-
         text = self.chat_entry.get().strip()
 
         if text == "":
             return
 
         sender_name = f"Client:{self.device_name}"
-
-        self.display_chat(sender_name, text)
 
         self.send_json({
             "type": "chat",

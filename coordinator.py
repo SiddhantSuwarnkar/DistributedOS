@@ -274,6 +274,7 @@ class CoordinatorApp:
             placeholder_text="Type message to all workers..."
         )
         self.chat_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.chat_entry.bind("<Return>", lambda e: self.send_chat_from_coordinator())
 
         self.send_btn = ctk.CTkButton(
             bottom,
