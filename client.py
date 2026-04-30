@@ -445,16 +445,19 @@ class ClientApp:
     # ------------------------------------------------ Execute Task
 
     def run_task(self, task, duration):
-        self.ui(lambda: self.task_label.configure(text=f"Running: {task}"))
+        self.ui(lambda: self.task_label.configure(text=f"Running: {task}  ({duration}s)"))
         self.ui(lambda: self.progress.set(0))
 
-        self.log(f"Started process: {task}")
+        self.log(f"Started process: {task}  (duration={duration}s)")
 
-        steps = max(1, duration * 10)
+        # Simulate at a fixed pace — 5 steps × 0.6 s = 3 s regardless of duration.
+        # This keeps the UI responsive; duration is used for scheduling priority only.
+        SIM_STEPS = 5
+        SIM_STEP_DELAY = 0.6
 
-        for i in range(steps):
-            time.sleep(duration / steps)
-            value = (i + 1) / steps
+        for i in range(SIM_STEPS):
+            time.sleep(SIM_STEP_DELAY)
+            value = (i + 1) / SIM_STEPS
             self.ui(lambda v=value: self.progress.set(v))
 
         self.ui(lambda: self.task_label.configure(text="Idle"))
@@ -469,6 +472,7 @@ class ClientApp:
         })
 
         self.worker_busy = False
+
 
     # ------------------------------------------------ Send
 

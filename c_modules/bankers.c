@@ -1,72 +1,47 @@
-#include <stdio.h>
+/*
+ * bankers.c  –  Banker's Algorithm (Safety Check)
+ *
+ * Function: bankers_is_safe()
+ *   Checks whether the system is in a safe state using the Banker's Algorithm.
+ *
+ * Parameters:
+ *   p        – number of processes
+ *   r        – number of resource types
+ *   avail[]  – available resources vector (length r)
+ *   max[]    – flattened max-demand matrix [p][r], row-major
+ *   alloc[]  – flattened allocation matrix [p][r], row-major
+ *
+ * Returns:
+ *   1 if a safe sequence exists (SAFE state)
+ *   0 if no safe sequence exists (UNSAFE state)
+ */
 
-#define MAXP 10
-#define MAXR 10
+#ifndef BANKERS_C
+#define BANKERS_C
 
-int main()
+#include <string.h>
+
+int bankers_is_safe(int p, int r, int avail[], int max[], int alloc[])
 {
-    int p, r;
-    int max[MAXP][MAXR];
-    int alloc[MAXP][MAXR];
-    int need[MAXP][MAXR];
-    int avail[MAXR];
-    int work[MAXR];
-
-    int finish[MAXP] = {0};
-    int safe[MAXP];
+    int work[10];
+    int finish[10];
+    int safe_seq[10];
+    int need[10][10];
     int count = 0;
 
-    scanf("%d %d", &p, &r);
-
-    for(int i = 0; i < p; i++)
-        for(int j = 0; j < r; j++)
-            scanf("%d", &max[i][j]);
-
-    for(int i = 0; i < p; i++)
-        for(int j = 0; j < r; j++)
-            scanf("%d", &alloc[i][j]);
-
-    for(int j = 0; j < r; j++)
-        scanf("%d", &avail[j]);
-
+    /* Initialise work = available */
     for(int j = 0; j < r; j++)
         work[j] = avail[j];
 
-    for(int i = 0; i < p; i++)
-        for(int j = 0; j < r; j++)
-            need[i][j] = max[i][j] - alloc[i][j];
-
-    printf("BANKERS ALGORITHM\n\n");
-
-    printf("MAX MATRIX\n");
+    /* Initialise finish[] = 0 and compute need[][] */
     for(int i = 0; i < p; i++)
     {
+        finish[i] = 0;
         for(int j = 0; j < r; j++)
-            printf("%d ", max[i][j]);
-        printf("\n");
+            need[i][j] = max[i * r + j] - alloc[i * r + j];
     }
 
-    printf("\nALLOCATION MATRIX\n");
-    for(int i = 0; i < p; i++)
-    {
-        for(int j = 0; j < r; j++)
-            printf("%d ", alloc[i][j]);
-        printf("\n");
-    }
-
-    printf("\nNEED MATRIX\n");
-    for(int i = 0; i < p; i++)
-    {
-        for(int j = 0; j < r; j++)
-            printf("%d ", need[i][j]);
-        printf("\n");
-    }
-
-    printf("\nAVAILABLE\n");
-    for(int j = 0; j < r; j++)
-        printf("%d ", avail[j]);
-    printf("\n\n");
-
+    /* Find a safe sequence */
     while(count < p)
     {
         int found = 0;
@@ -88,17 +63,10 @@ int main()
 
                 if(possible)
                 {
-                    printf("P%d can execute. Work: ", i);
-
                     for(int j = 0; j < r; j++)
-                    {
-                        work[j] += alloc[i][j];
-                        printf("%d ", work[j]);
-                    }
+                        work[j] += alloc[i * r + j];
 
-                    printf("\n");
-
-                    safe[count++] = i;
+                    safe_seq[count++] = i;
                     finish[i] = 1;
                     found = 1;
                 }
@@ -106,19 +74,10 @@ int main()
         }
 
         if(found == 0)
-        {
-            printf("\nSYSTEM IS UNSAFE\n");
-            return 0;
-        }
+            return 0; /* UNSAFE */
     }
 
-    printf("\nSYSTEM IS SAFE\n");
-    printf("SAFE SEQUENCE: ");
-
-    for(int i = 0; i < p; i++)
-        printf("P%d ", safe[i]);
-
-    printf("\n");
-
-    return 0;
+    return 1; /* SAFE */
 }
+
+#endif /* BANKERS_C */

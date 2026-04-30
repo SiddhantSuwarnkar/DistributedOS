@@ -1,37 +1,39 @@
-#include <stdio.h>
-#include <stdlib.h>
+/*
+ * scheduler.c  –  CPU Scheduling Algorithms
+ *
+ * Function: run_scheduler()
+ *   Picks the index (0-based) of the next process to dispatch from the
+ *   ready queue using the chosen algorithm.
+ *
+ * Parameters:
+ *   algo       – "FCFS" | "SJF" | "PRIORITY" | "RR"
+ *   n          – number of processes in the ready queue
+ *   burst[]    – burst times (durations) of each process
+ *   priority[] – priority values of each process (lower = higher priority)
+ *   rr_last    – index of the last process dispatched (used for Round Robin);
+ *                pass -1 on first call
+ *
+ * Returns:
+ *   Index (0..n-1) of the selected process
+ */
+
+#ifndef SCHEDULER_C
+#define SCHEDULER_C
+
 #include <string.h>
 
-int main(int argc, char *argv[])
+int run_scheduler(const char *algo, int n, int burst[], int priority[], int rr_last)
 {
-    if(argc < 3)
+    if(n <= 0) return 0;
+
+    /* ── FCFS: first-in, first-served → always index 0 ── */
+    if(strcmp(algo, "FCFS") == 0)
     {
-        printf("0");
         return 0;
     }
 
-    char algo[20];
-    strcpy(algo, argv[1]);
-
-    int n = argc - 2;
-    int burst[100];
-    int priority[100];
-
-    for(int i = 0; i < n; i++)
-    {
-        burst[i] = atoi(argv[i + 2]);
-
-        /* demo priority derived from burst
-           smaller number = higher priority */
-        priority[i] = (burst[i] % 5) + 1;
-    }
-
-    if(strcmp(algo, "FCFS") == 0)
-    {
-        printf("0");
-    }
-
-    else if(strcmp(algo, "SJF") == 0)
+    /* ── SJF: pick process with smallest burst time ── */
+    if(strcmp(algo, "SJF") == 0)
     {
         int idx = 0;
 
@@ -41,10 +43,11 @@ int main(int argc, char *argv[])
                 idx = i;
         }
 
-        printf("%d", idx);
+        return idx;
     }
 
-    else if(strcmp(algo, "PRIORITY") == 0)
+    /* ── PRIORITY: pick process with lowest priority number ── */
+    if(strcmp(algo, "PRIORITY") == 0)
     {
         int idx = 0;
 
@@ -52,27 +55,21 @@ int main(int argc, char *argv[])
         {
             if(priority[i] < priority[idx])
                 idx = i;
-
-            else if(priority[i] == priority[idx] &&
-                    burst[i] < burst[idx])
+            else if(priority[i] == priority[idx] && burst[i] < burst[idx])
                 idx = i;
         }
 
-        printf("%d", idx);
+        return idx;
     }
 
-    else if(strcmp(algo, "RR") == 0)
+    /* ── Round Robin: next after the last dispatched ── */
+    if(strcmp(algo, "RR") == 0)
     {
-        static int last = -1;
-
-        last = (last + 1) % n;
-        printf("%d", last);
+        return (rr_last + 1) % n;
     }
 
-    else
-    {
-        printf("0");
-    }
-
+    /* Fallback to FCFS */
     return 0;
 }
+
+#endif /* SCHEDULER_C */

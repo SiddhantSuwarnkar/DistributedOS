@@ -1,100 +1,56 @@
 #include <stdio.h>
-#include <string.h>
 
-#define BLOCKS 5
-
-int memory[BLOCKS] = {100, 500, 200, 300, 600};
-int process_size = 212;
-int last_pos = 0;
-
-int first_fit()
+int first_fit(int blocks[], int m, int size)
 {
-    for(int i = 0; i < BLOCKS; i++)
-    {
-        if(memory[i] >= process_size)
+    for(int i = 0; i < m; i++)
+        if(blocks[i] >= size)
             return i;
-    }
     return -1;
 }
 
-int best_fit()
+int best_fit(int blocks[], int m, int size)
 {
     int idx = -1;
-
-    for(int i = 0; i < BLOCKS; i++)
+    for(int i = 0; i < m; i++)
     {
-        if(memory[i] >= process_size)
+        if(blocks[i] >= size)
         {
-            if(idx == -1 || memory[i] < memory[idx])
+            if(idx == -1 || blocks[i] < blocks[idx])
                 idx = i;
         }
     }
     return idx;
 }
 
-int worst_fit()
+int worst_fit(int blocks[], int m, int size)
 {
     int idx = -1;
-
-    for(int i = 0; i < BLOCKS; i++)
+    for(int i = 0; i < m; i++)
     {
-        if(memory[i] >= process_size)
+        if(blocks[i] >= size)
         {
-            if(idx == -1 || memory[i] > memory[idx])
+            if(idx == -1 || blocks[i] > blocks[idx])
                 idx = i;
         }
     }
     return idx;
 }
 
-int next_fit()
+/*
+ * next_fit: allocate from blocks[], starting search at last_pos.
+ *           Sets *new_pos to the position AFTER the chosen block
+ *           so the caller can persist it across calls.
+ */
+int next_fit(int blocks[], int m, int size, int last_pos, int *new_pos)
 {
-    for(int count = 0; count < BLOCKS; count++)
+    for(int c = 0; c < m; c++)
     {
-        int i = (last_pos + count) % BLOCKS;
-
-        if(memory[i] >= process_size)
+        int i = (last_pos + c) % m;
+        if(blocks[i] >= size)
         {
-            last_pos = i + 1;
+            *new_pos = (i + 1) % m;
             return i;
         }
     }
     return -1;
-}
-
-int main(int argc, char *argv[])
-{
-    int block = -1;
-
-    if(argc < 2)
-    {
-        printf("Usage");
-        return 0;
-    }
-
-    if(strcmp(argv[1], "FirstFit") == 0)
-        block = first_fit();
-
-    else if(strcmp(argv[1], "BestFit") == 0)
-        block = best_fit();
-
-    else if(strcmp(argv[1], "WorstFit") == 0)
-        block = worst_fit();
-
-    else if(strcmp(argv[1], "NextFit") == 0)
-        block = next_fit();
-
-    else
-    {
-        printf("Invalid");
-        return 0;
-    }
-
-    if(block == -1)
-        printf("No Block");
-
-    else
-        printf("Block %d", block + 1);
-
-    return 0;
 }
